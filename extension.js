@@ -55,6 +55,7 @@ async function casLogin(ctx, service, phone, code, log) {
 }
 
 function parseMainCourse(html, log) {
+    const NumberMap = { "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10 };
     log("[主课表] 开始解析");
     const events = [];
     const trs = html.match(/<tr[\s\S]*?<\/tr>/gi) || [];
@@ -65,8 +66,8 @@ function parseMainCourse(html, log) {
         const tds = tr.match(/<td\b[^>]*>[\s\S]*?<\/td>/gi) || [];
         let lecture = null;
         for (const td of tds) {
-            const m = stripTag(td).match(/第\s*(\d+)\s*讲/);
-            if (m) { lecture = Number(m[1]); break; }
+            const m = stripTag(td).match(/第\s*(一|二|三|四|五|六|七|八|九|十)\s*讲/);
+            if (m) { lecture = NumberMap[m[1]]; break; }
         }
         if (!lecture) continue;
 
