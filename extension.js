@@ -18,16 +18,13 @@ exports.meta = {
     buttons: [
         { key: "Get_Sms_Code", label: "发送验证码" },
         { key: "login", label: "登录获取课表" },
-        { key: "debug_experiment", label: "调试实验课" },
-        { key: "debug_exp_pages", label: "探索实验课页面" },
     ],
 };
 
 const CAS_LOGIN_URL = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fmatrix.dean.swust.edu.cn%2FacadmicManager%2Findex.cfm%3Fevent%3DstudentPortal%3ADEFAULT_EVENT";
 const CAS_EXPERIMENT_LOGIN_URL = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fsjjx.dean.swust.edu.cn%2Fswust%2F";
 const TIMETABLE_URL = "https://matrix.dean.swust.edu.cn/acadmicManager/index.cfm?event=studentPortal:courseTable";
-const EXPERIMENT_URL = "https://sjjx.dean.swust.edu.cn/swust/";
-const EXPERIMENT_TIMETABLE_URL = "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/timetable.action";
+const EXPERIMENT_COURSE_API = "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/index.action";
 const BASE_ORIGIN = new URL(CAS_LOGIN_URL).origin;
 
 const SECTION_TIME_MAP = {
@@ -585,7 +582,7 @@ async function loginExperiment(ctx, debug) {
 
     // Step 4: Try direct access to experiment URL
     debug("[loginExperiment] 步骤4: 尝试直接访问实验课页面...");
-    const expPage = await ctx.http.get(EXPERIMENT_URL, { timeout: 15000, withCredentials: true });
+    const expPage = await ctx.http.get(EXPERIMENT_COURSE_API, { timeout: 15000, withCredentials: true });
     const expTxt = typeof expPage.data === "string" ? expPage.data : JSON.stringify(expPage.data ?? {});
     debug(`[loginExperiment] 直接访问长度: ${expTxt.length}`);
 
@@ -597,7 +594,6 @@ async function loginExperiment(ctx, debug) {
     // Step 5: Try alternative experiment URLs
     debug("[loginExperiment] 步骤5: 尝试其他实验课URL...");
     const altUrls = [
-        EXPERIMENT_TIMETABLE_URL,
         "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/selCourse.action",
     ];
     
@@ -632,7 +628,7 @@ async function fetchExperimentCourses(ctx, debug) {
         debug(`[fetchExperimentCourses] 获取第 ${pageNum} 页...`);
         try {
             // Use the correct experiment course API endpoint
-            const url = `https://sjjx.dean.swust.edu.cn/teachn/teachnAction/index.action?page.pageNum=${pageNum}`;
+            const url = `${EXPERIMENT_COURSE_API}?page.pageNum=${pageNum}`;
             const res = await ctx.http.get(url, { timeout: 15000, withCredentials: true });
             const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data ?? {});
 
@@ -694,7 +690,7 @@ async function fetchExperimentCourses(ctx, debug) {
 
 async function fetchTimetable(ctx, debug) {
     debug("[fetchTimetable] 开始获取课表");
-    const urls = [TIMETABLE_URL, EXPERIMENT_URL, EXPERIMENT_TIMETABLE_URL];
+    const urls = [TIMETABLE_URL];
     const rawSnapshots = [];
 
     for (let i = 0; i < urls.length; i++) {
@@ -1115,139 +1111,6 @@ exports.run = async (ctx) => {
         const result = await fetchTimetable(ctx, debug);
         debug(`[run] ✓ 完成，获取 ${result.events.length} 个课程`);
         return { ...result, debug: { ...result.debug, log: debugLog, loginSuccess: true } };
-    }
-
-    // Debug experiment course parsing
-    if (ctx.hasButton("debug_experiment")) {
-        debug("[run] >>> 调试实验课模式 <<<");
-
-        // Check session first
-        const hasSession = await verifySession(ctx, debug);
-        if (!hasSession) {
-            debug("[run] ✗ 会话无效，请先登录");
-            return { events: [], debug: { log: debugLog, error: "请先点击「登录获取课表」建立会话" } };
-        }
-
-        // Try to login experiment system
-        debug("[run] 尝试登录实验课系统...");
-        const expLoginOk = await loginExperiment(ctx, debug);
-
-        debug("[run] ✓ 会话有效，获取实验课页面...");
-        const expUrls = [
-            EXPERIMENT_URL,
-            "https://sjjx.dean.swust.edu.cn/aexp/stuCourseTable.jsp",
-        ];
-
-        for (const url of expUrls) {
-            debug(`[run] 尝试获取: ${url}`);
-            try {
-                const res = await ctx.http.get(url, { timeout: 15000, withCredentials: true });
-                const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data ?? {});
-                debug(`[run] 获取成功，HTML长度: ${html.length}`);
-
-                // Return raw HTML for debugging
-                return {
-                    events: [],
-                    debug: {
-                        log: debugLog,
-                        experimentHtml: html,
-                        experimentUrl: url,
-                        htmlLength: html.length,
-                        expLoginOk,
-                    },
-                    configurations: { "script-name": "西南科技大学-调试" },
-                };
-            } catch (e) {
-                debug(`[run] ✗ 获取失败: ${String(e)}`);
-            }
-        }
-
-        return { events: [], debug: { log: debugLog, error: "无法获取实验课页面" } };
-    }
-
-    // Debug: Explore experiment system pages
-    if (ctx.hasButton("debug_exp_pages")) {
-        debug("[run] >>> 探索实验课页面模式 <<<");
-
-        // First login to experiment system
-        const expLoginOk = await loginExperiment(ctx, debug);
-        if (!expLoginOk) {
-            return { events: [], debug: { log: debugLog, error: "无法登录实验课系统" } };
-        }
-
-        const results = [];
-
-        // First get the left navigation menu to find course table link
-        debug("[run] 获取左侧导航菜单...");
-        const leftNavUrl = "https://sjjx.dean.swust.edu.cn/aexp/stuLeft.jsp";
-        let courseTableUrl = null;
-
-        try {
-            const leftRes = await ctx.http.get(leftNavUrl, { timeout: 15000, withCredentials: true });
-            const leftHtml = typeof leftRes.data === "string" ? leftRes.data : JSON.stringify(leftRes.data ?? {});
-            debug(`[run] 左侧导航长度: ${leftHtml.length}`);
-
-            // Look for course table related links
-            const linkMatches = leftHtml.matchAll(/href=["']([^"']*(?:课表|课程|实验|教学)[^"']*)["']/gi);
-            for (const match of linkMatches) {
-                debug(`[run] 发现相关链接: ${match[1]}`);
-                if (match[1].includes("CourseTable") || match[1].includes("courseTable") || match[1].includes("实验")) {
-                    courseTableUrl = match[1].startsWith("http") ? match[1] : `https://sjjx.dean.swust.edu.cn/aexp/${match[1]}`;
-                    debug(`[run] 找到课表链接: ${courseTableUrl}`);
-                }
-            }
-
-            results.push({
-                url: leftNavUrl,
-                length: leftHtml.length,
-                html: leftHtml.substring(0, 8000),
-                isNavigation: true,
-            });
-        } catch (e) {
-            debug(`[run] ✗ 获取左侧导航失败: ${String(e)}`);
-        }
-
-        // Try to find the course table page
-        const pageUrls = [
-            courseTableUrl,
-            "https://sjjx.dean.swust.edu.cn/aexp/stuCourseTable.jsp",
-            "https://sjjx.dean.swust.edu.cn/aexp/student/courseTable.jsp",
-            "https://sjjx.dean.swust.edu.cn/aexp/courseTable.jsp",
-            EXPERIMENT_URL,
-        ].filter(Boolean);
-
-        for (const url of pageUrls) {
-            debug(`[run] 尝试获取: ${url}`);
-            try {
-                const res = await ctx.http.get(url, { timeout: 15000, withCredentials: true });
-                const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data ?? {});
-                debug(`[run] 获取成功，HTML长度: ${html.length}`);
-
-                // Extract links for navigation
-                const links = html.match(/href=["']([^"']+)["']/gi) || [];
-                const srcs = html.match(/src=["']([^"']+)["']/gi) || [];
-                debug(`[run] 找到 ${links.length} 个链接, ${srcs.length} 个资源`);
-
-                results.push({
-                    url,
-                    length: html.length,
-                    html: html.length < 10000 ? html : html.substring(0, 5000) + "...[truncated]",
-                    linkCount: links.length,
-                    links: links.slice(0, 20).map(l => l.replace(/href=["']/gi, '').replace(/["']$/, '')),
-                });
-            } catch (e) {
-                debug(`[run] ✗ 获取失败: ${String(e)}`);
-            }
-        }
-
-        return {
-            events: [],
-            debug: {
-                log: debugLog,
-                pages: results,
-            },
-            configurations: { "script-name": "西南科技大学-调试" },
-        };
     }
 
     debug("[run] ✗ 未点击任何按钮");
