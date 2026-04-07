@@ -24,9 +24,9 @@ exports.meta = {
 };
 
 const CAS_LOGIN_URL = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fmatrix.dean.swust.edu.cn%2FacadmicManager%2Findex.cfm%3Fevent%3DstudentPortal%3ADEFAULT_EVENT";
-const CAS_EXPERIMENT_LOGIN_URL = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fsjjx.dean.swust.edu.cn%2Fteachn%2FteachnAction%2Findex.action";
+const CAS_EXPERIMENT_LOGIN_URL = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fsjjx.dean.swust.edu.cn%2Fswust%2F";
 const TIMETABLE_URL = "https://matrix.dean.swust.edu.cn/acadmicManager/index.cfm?event=studentPortal:courseTable";
-const EXPERIMENT_URL = "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/index.action";
+const EXPERIMENT_URL = "https://sjjx.dean.swust.edu.cn/swust/";
 const EXPERIMENT_TIMETABLE_URL = "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/timetable.action";
 const BASE_ORIGIN = new URL(CAS_LOGIN_URL).origin;
 
@@ -449,7 +449,7 @@ async function loginExperiment(ctx, debug) {
         debug("[loginExperiment] 步骤3: 检测到登录超时，需要重新进行CAS认证...");
         
         // Get fresh CAS login page for experiment system
-        const freshCasUrl = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fsjjx.dean.swust.edu.cn%2Fteachn%2FteachnAction%2Findex.action";
+        const freshCasUrl = CAS_EXPERIMENT_LOGIN_URL;
         debug(`[loginExperiment] 获取新的CAS登录页: ${freshCasUrl}`);
         
         try {
