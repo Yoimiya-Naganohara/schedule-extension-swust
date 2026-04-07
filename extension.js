@@ -632,26 +632,42 @@ async function fetchExperimentCourses(ctx, debug) {
             const res = await ctx.http.get(url, { timeout: 15000, withCredentials: true });
             const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data ?? {});
 
-            // Parse total pages
+            // Parse total pages from #myPage element
             if (pageNum === 1) {
-                const pageMatch = html.match(/第\s*\d+\s*页\s*\/\s*共\s*(\d+)\s*页/);
+                // Pattern: "第 1 页 / 共 5 页" or "第1页/共5页"
+                const pageMatch = html.match(/第\s*(\d+)\s*页\s*\/\s*共\s*(\d+)\s*页/);
                 if (pageMatch) {
-                    totalPages = Number(pageMatch[1]);
+                    totalPages = Number(pageMatch[2]);
                     debug(`[fetchExperimentCourses] 共 ${totalPages} 页`);
+                } else {
+                    // Alternative: try #myPage > p parsing
+                    const myPageMatch = html.match(/id=["']myPage["'][^>]*>[\s\S]*?<p[^>]*>([^<]+)<\/p>/);
+                    if (myPageMatch) {
+                        const pageText = myPageMatch[1].replace(/页/g, "").replace(/ /g, "").replace(/第/g, "").replace(/共/g, "");
+                        const parts = pageText.split("/");
+                        if (parts.length === 2) {
+                            totalPages = Number(parts[1]) || 1;
+                            debug(`[fetchExperimentCourses] 共 ${totalPages} 页 (alternative parse)`);
+                        }
+                    }
                 }
             }
 
-            // Parse course rows
-            const trMatches = html.matchAll(/<tr[^>]*class=["'](?:odd)?["'][^>]*>([\s\S]*?)<\/tr>/gi);
+            // Parse course rows using tabson class
+            // HTML structure: <div class="tabson"><table><tbody><tr><td>...</td></tr></tbody></table></div>
             let rowCount = 0;
+            
+            // Match all tr elements within the table
+            const trMatches = html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
             for (const trMatch of trMatches) {
                 const trHtml = trMatch[1];
                 const tdMatches = trHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi);
                 const cells = [];
                 for (const tdMatch of tdMatches) {
-                    cells.push(stripTags(tdMatch[1]));
+                    cells.push(stripTags(tdMatch[1]).trim());
                 }
 
+                // Need at least 5 columns: courseName, projectName, time, location, teacher
                 if (cells.length >= 5) {
                     const courseName = cells[0];
                     const projectName = cells[1];
@@ -659,9 +675,11 @@ async function fetchExperimentCourses(ctx, debug) {
                     const location = cells[3];
                     const teacher = cells[4];
 
+                    if (!courseName || !timeStr) continue;
+
                     const timeInfo = parseExperimentTime(timeStr, debug);
                     if (timeInfo) {
-                        const eventId = `exp-${timeInfo.week}-${timeInfo.day}-${timeInfo.startSection}-${courseName}`.replace(/\s+/g, "-");
+                        const eventId = `exp-${timeInfo.week}-${timeInfo.day}-${timeInfo.startSection}-${Date.now()}`.replace(/\s+/g, "-");
                         allEvents.push({
                             id: eventId,
                             title: courseName,
