@@ -24,10 +24,10 @@ exports.meta = {
 };
 
 const CAS_LOGIN_URL = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fmatrix.dean.swust.edu.cn%2FacadmicManager%2Findex.cfm%3Fevent%3DstudentPortal%3ADEFAULT_EVENT";
-const CAS_EXPERIMENT_LOGIN_URL = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fsjjx.dean.swust.edu.cn%2Faexp%2FstuIndex.jsp";
+const CAS_EXPERIMENT_LOGIN_URL = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fsjjx.dean.swust.edu.cn%2Fteachn%2FteachnAction%2Findex.action";
 const TIMETABLE_URL = "https://matrix.dean.swust.edu.cn/acadmicManager/index.cfm?event=studentPortal:courseTable";
-const EXPERIMENT_URL = "https://sjjx.dean.swust.edu.cn/aexp/stuIndex.jsp";
-const EXPERIMENT_COURSE_URL = "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/index.action";
+const EXPERIMENT_URL = "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/index.action";
+const EXPERIMENT_TIMETABLE_URL = "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/timetable.action";
 const BASE_ORIGIN = new URL(CAS_LOGIN_URL).origin;
 
 const SECTION_TIME_MAP = {
@@ -360,9 +360,20 @@ async function login(ctx, phone, smsCode, debug) {
 async function loginExperiment(ctx, debug) {
     debug("[loginExperiment] 开始登录实验课系统");
 
-    // First, try direct access via CAS service URL
-    // This should auto-redirect if CAS session is valid
-    debug("[loginExperiment] 通过 CAS service URL 访问实验课系统...");
+    // Step 1: First, visit the experiment system login page to establish session
+    debug("[loginExperiment] 步骤1: 访问实验课登录页面建立会话...");
+    const expLoginUrl = "https://sjjx.dean.swust.edu.cn/aexp/login.jsp";
+    try {
+        const loginPageRes = await ctx.http.get(expLoginUrl, { timeout: 15000, withCredentials: true });
+        debug(`[loginExperiment] 登录页状态: ${loginPageRes.status}`);
+        const loginPageTxt = typeof loginPageRes.data === "string" ? loginPageRes.data : JSON.stringify(loginPageRes.data ?? {});
+        debug(`[loginExperiment] 登录页长度: ${loginPageTxt.length}`);
+    } catch (e) {
+        debug(`[loginExperiment] 访问登录页失败: ${String(e)}`);
+    }
+
+    // Step 2: Try CAS login for experiment system
+    debug("[loginExperiment] 步骤2: 通过 CAS service URL 访问实验课系统...");
     const casPage = await ctx.http.get(CAS_EXPERIMENT_LOGIN_URL, { timeout: 15000, withCredentials: true });
     debug(`[loginExperiment] CAS页状态: ${casPage.status}`);
 
@@ -426,8 +437,69 @@ async function loginExperiment(ctx, debug) {
         }
     }
 
-    // Try direct access to experiment URL
-    debug("[loginExperiment] 尝试直接访问实验课页面...");
+    // Step 3: Check if we got a JS redirect to login.jsp
+    const jsRedirectMatch = casTxt.match(/window\.location\s*=\s*["']([^"']+)["']/);
+    if (jsRedirectMatch) {
+        const redirectUrl = jsRedirectMatch[1];
+        debug(`[loginExperiment] 步骤3: 检测到JS重定向: ${redirectUrl}`);
+        
+        // Handle relative URLs
+        const fullRedirectUrl = redirectUrl.startsWith("http") 
+            ? redirectUrl 
+            : `https://sjjx.dean.swust.edu.cn/aexp/${redirectUrl}`;
+        
+        debug(`[loginExperiment] 访问重定向URL: ${fullRedirectUrl}`);
+        try {
+            const redirectRes = await ctx.http.get(fullRedirectUrl, { timeout: 15000, withCredentials: true });
+            const redirectTxt = typeof redirectRes.data === "string" ? redirectRes.data : JSON.stringify(redirectRes.data ?? {});
+            debug(`[loginExperiment] 重定向页长度: ${redirectTxt.length}`);
+            debug(`[loginExperiment] 重定向页预览: ${redirectTxt.substring(0, 500)}...`);
+            
+            // Check if this is a CAS login page
+            const redirectExecution = extractExecution(redirectTxt);
+            if (redirectExecution) {
+                debug(`[loginExperiment] 发现CAS登录页，execution: ${redirectExecution}`);
+                // Try to login with stored credentials
+                const storedPhone = await ctx.storage.get("swust_phone");
+                const storedSmsCode = await ctx.storage.get("swust_sms_code");
+                
+                if (storedPhone && storedSmsCode) {
+                    const payloads = [
+                        { execution: redirectExecution, _eventId: "submit", username: storedPhone, mobile: storedPhone,
+                          lm: "dynamicLogin", dynamicCode: storedSmsCode, code: storedSmsCode, smsCode: storedSmsCode,
+                          type: "mobile", loginType: "dynamic", rememberMe: "true" },
+                    ];
+                    
+                    for (let i = 0; i < payloads.length; i++) {
+                        debug(`[loginExperiment] 尝试重定向页登录 ${i + 1}/${payloads.length}`);
+                        try {
+                            const loginRes = await ctx.http.post(fullRedirectUrl, buildForm(payloads[i]), {
+                                timeout: 15000,
+                                withCredentials: true,
+                                headers: {
+                                    "Content-Type": "application/x-www-form-urlencoded",
+                                    Referer: fullRedirectUrl,
+                                },
+                            });
+                            const loginTxt = typeof loginRes.data === "string" ? loginRes.data : JSON.stringify(loginRes.data ?? {});
+                            
+                            if (loginTxt.includes("实验") && !loginTxt.includes("login")) {
+                                debug("[loginExperiment] ✓ 重定向页登录成功");
+                                return true;
+                            }
+                        } catch (e) {
+                            debug(`[loginExperiment] 重定向页登录失败: ${String(e)}`);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            debug(`[loginExperiment] 访问重定向URL失败: ${String(e)}`);
+        }
+    }
+
+    // Step 4: Try direct access to experiment URL
+    debug("[loginExperiment] 步骤4: 尝试直接访问实验课页面...");
     const expPage = await ctx.http.get(EXPERIMENT_URL, { timeout: 15000, withCredentials: true });
     const expTxt = typeof expPage.data === "string" ? expPage.data : JSON.stringify(expPage.data ?? {});
     debug(`[loginExperiment] 直接访问长度: ${expTxt.length}`);
@@ -435,6 +507,29 @@ async function loginExperiment(ctx, debug) {
     if (expTxt.includes("实验") && !expTxt.includes("login")) {
         debug("[loginExperiment] ✓ 直接访问成功");
         return true;
+    }
+
+    // Step 5: Try alternative experiment URLs
+    debug("[loginExperiment] 步骤5: 尝试其他实验课URL...");
+    const altUrls = [
+        EXPERIMENT_TIMETABLE_URL,
+        "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/selCourse.action",
+    ];
+    
+    for (const url of altUrls) {
+        debug(`[loginExperiment] 尝试: ${url}`);
+        try {
+            const altRes = await ctx.http.get(url, { timeout: 15000, withCredentials: true });
+            const altTxt = typeof altRes.data === "string" ? altRes.data : JSON.stringify(altRes.data ?? {});
+            debug(`[loginExperiment] 响应长度: ${altTxt.length}`);
+            
+            if (altTxt.includes("实验") && !altTxt.includes("login")) {
+                debug(`[loginExperiment] ✓ 通过 ${url} 访问成功`);
+                return true;
+            }
+        } catch (e) {
+            debug(`[loginExperiment] 访问 ${url} 失败: ${String(e)}`);
+        }
     }
 
     debug("[loginExperiment] ✗ 无法访问实验课系统");
@@ -451,7 +546,7 @@ async function fetchExperimentCourses(ctx, debug) {
     do {
         debug(`[fetchExperimentCourses] 获取第 ${pageNum} 页...`);
         try {
-            const url = `${EXPERIMENT_COURSE_URL}?page.pageNum=${pageNum}`;
+            const url = `${EXPERIMENT_URL}?page.pageNum=${pageNum}`;
             const res = await ctx.http.get(url, { timeout: 15000, withCredentials: true });
             const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data ?? {});
 
@@ -513,7 +608,7 @@ async function fetchExperimentCourses(ctx, debug) {
 
 async function fetchTimetable(ctx, debug) {
     debug("[fetchTimetable] 开始获取课表");
-    const urls = [TIMETABLE_URL, EXPERIMENT_URL, "https://sjjx.dean.swust.edu.cn/aexp/stuCourseTable.jsp"];
+    const urls = [TIMETABLE_URL, EXPERIMENT_URL, EXPERIMENT_TIMETABLE_URL];
     const rawSnapshots = [];
 
     for (let i = 0; i < urls.length; i++) {
