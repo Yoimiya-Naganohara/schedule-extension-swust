@@ -631,7 +631,8 @@ async function fetchExperimentCourses(ctx, debug) {
     do {
         debug(`[fetchExperimentCourses] 获取第 ${pageNum} 页...`);
         try {
-            const url = `${EXPERIMENT_URL}?page.pageNum=${pageNum}`;
+            // Use the correct experiment course API endpoint
+            const url = `https://sjjx.dean.swust.edu.cn/teachn/teachnAction/index.action?page.pageNum=${pageNum}`;
             const res = await ctx.http.get(url, { timeout: 15000, withCredentials: true });
             const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data ?? {});
 
