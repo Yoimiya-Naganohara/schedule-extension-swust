@@ -437,9 +437,94 @@ async function loginExperiment(ctx, debug) {
         }
     }
 
-    // Step 3: Check if we got a JS redirect to login.jsp
-    const jsRedirectMatch = casTxt.match(/window\.location\s*=\s*["']([^"']+)["']/);
-    if (jsRedirectMatch) {
+    // Step 3: Check if we got a JS redirect or login timeout error
+    const jsRedirectMatch = casTxt.match(/(?:window\.location|self\.location)\s*=\s*["']([^"']+)["']/);
+    const alertMatch = casTxt.match(/alert\s*\(\s*["']([^"']+)["']\s*\)/);
+    
+    if (alertMatch) {
+        debug(`[loginExperiment] 检测到提示: ${alertMatch[1]}`);
+    }
+    
+    if (casTxt.includes("登录超时") || casTxt.includes("请重新登录") || casTxt.includes("timeout")) {
+        debug("[loginExperiment] 步骤3: 检测到登录超时，需要重新进行CAS认证...");
+        
+        // Get fresh CAS login page for experiment system
+        const freshCasUrl = "https://cas.swust.edu.cn/authserver/login?service=https%3A%2F%2Fsjjx.dean.swust.edu.cn%2Fteachn%2FteachnAction%2Findex.action";
+        debug(`[loginExperiment] 获取新的CAS登录页: ${freshCasUrl}`);
+        
+        try {
+            const freshCasRes = await ctx.http.get(freshCasUrl, { timeout: 15000, withCredentials: true });
+            const freshCasTxt = typeof freshCasRes.data === "string" ? freshCasRes.data : JSON.stringify(freshCasRes.data ?? {});
+            debug(`[loginExperiment] 新CAS页长度: ${freshCasTxt.length}`);
+            
+            const freshExecution = extractExecution(freshCasTxt);
+            debug(`[loginExperiment] 新CAS execution: ${freshExecution || "(空)"}`);
+            
+            if (freshExecution) {
+                // Get stored credentials
+                const storedPhone = await ctx.storage.get("swust_phone");
+                const storedSmsCode = await ctx.storage.get("swust_sms_code");
+                
+                if (!storedPhone || !storedSmsCode) {
+                    debug("[loginExperiment] ⚠ 没有存储的凭据，无法重新登录");
+                    return false;
+                }
+                
+                debug(`[loginExperiment] 使用存储的凭据重新登录: ${storedPhone}`);
+                
+                const payloads = [
+                    { execution: freshExecution, _eventId: "submit", username: storedPhone, mobile: storedPhone,
+                      lm: "dynamicLogin", dynamicCode: storedSmsCode, code: storedSmsCode, smsCode: storedSmsCode,
+                      type: "mobile", loginType: "dynamic", rememberMe: "true" },
+                    { execution: freshExecution, _eventId: "submit", username: storedPhone, mobile: storedPhone,
+                      dynamicCode: storedSmsCode, code: storedSmsCode, smsCode: storedSmsCode, loginType: "dynamic" },
+                ];
+                
+                for (let i = 0; i < payloads.length; i++) {
+                    debug(`[loginExperiment] 尝试重新登录 payload ${i + 1}/${payloads.length}`);
+                    try {
+                        const loginRes = await ctx.http.post(freshCasUrl, buildForm(payloads[i]), {
+                            timeout: 15000,
+                            withCredentials: true,
+                            headers: {
+                                "Content-Type": "application/x-www-form-urlencoded",
+                                Referer: freshCasUrl,
+                            },
+                        });
+                        const loginTxt = typeof loginRes.data === "string" ? loginRes.data : JSON.stringify(loginRes.data ?? {});
+                        debug(`[loginExperiment] 重新登录响应长度: ${loginTxt.length}`);
+                        
+                        if (loginTxt.includes("实验") && !loginTxt.includes("login") && !loginTxt.includes("alert")) {
+                            debug("[loginExperiment] ✓ 重新登录成功");
+                            return true;
+                        }
+                        
+                        // Check for redirect
+                        if (loginTxt.includes("self.location") || loginTxt.includes("window.location")) {
+                            const redirMatch = loginTxt.match(/(?:self|window)\.location\s*=\s*["']([^"']+)["']/);
+                            if (redirMatch && !loginTxt.includes("alert")) {
+                                debug(`[loginExperiment] 检测到重定向: ${redirMatch[1]}`);
+                                // Follow the redirect
+                                const redirUrl = redirMatch[1].startsWith("http") 
+                                    ? redirMatch[1] 
+                                    : `https://sjjx.dean.swust.edu.cn${redirMatch[1]}`;
+                                const redirRes = await ctx.http.get(redirUrl, { timeout: 15000, withCredentials: true });
+                                const redirTxt = typeof redirRes.data === "string" ? redirRes.data : JSON.stringify(redirRes.data ?? {});
+                                if (redirTxt.includes("实验") && !redirTxt.includes("login")) {
+                                    debug("[loginExperiment] ✓ 通过重定向访问成功");
+                                    return true;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        debug(`[loginExperiment] 重新登录失败: ${String(e)}`);
+                    }
+                }
+            }
+        } catch (e) {
+            debug(`[loginExperiment] 获取新CAS页失败: ${String(e)}`);
+        }
+    } else if (jsRedirectMatch) {
         const redirectUrl = jsRedirectMatch[1];
         debug(`[loginExperiment] 步骤3: 检测到JS重定向: ${redirectUrl}`);
         
