@@ -1175,6 +1175,8 @@ exports.run = async (ctx) => {
             return { events: [], debug: { log: debugLog, error: "无法登录实验课系统" } };
         }
 
+        const results = [];
+
         // First get the left navigation menu to find course table link
         debug("[run] 获取左侧导航菜单...");
         const leftNavUrl = "https://sjjx.dean.swust.edu.cn/aexp/stuLeft.jsp";
@@ -1214,7 +1216,6 @@ exports.run = async (ctx) => {
             EXPERIMENT_URL,
         ].filter(Boolean);
 
-        const results = [];
         for (const url of pageUrls) {
             debug(`[run] 尝试获取: ${url}`);
             try {
