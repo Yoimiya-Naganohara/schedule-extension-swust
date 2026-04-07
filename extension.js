@@ -33,20 +33,33 @@ const buildForm = (d) => new URLSearchParams(d).toString();
 
 async function casLogin(ctx, service, phone, code, log) {
     const url = `${CAS_URL}?service=${encodeURIComponent(service)}`;
+    log(`[CAS] 获取登录页: ${service === CAS_SERVICE_MAIN ? "主系统" : "实验课系统"}`);
+
     const page = await ctx.http.get(url, { withCredentials: true });
     const exec = extractExec(page.data);
-    if (!exec) return true; // Already logged in
+
+    if (!exec) {
+        log("[CAS] 已有会话，跳过登录");
+        return true;
+    }
+
+    log(`[CAS] execution: ${exec.substring(0, 10)}...`);
 
     const payload = { execution: exec, _eventId: "submit", username: phone, mobile: phone, lm: "dynamicLogin", dynamicCode: code, smsCode: code, type: "mobile", loginType: "dynamic" };
     const res = await ctx.http.post(url, buildForm(payload), { withCredentials: true, headers: { "Content-Type": "application/x-www-form-urlencoded", Referer: url } });
     const txt = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
-    return txt.includes("studentPortal") || txt.includes("实验") || txt.includes("swust");
+
+    const success = txt.includes("studentPortal") || txt.includes("实验") || txt.includes("swust");
+    log(`[CAS] 登录${success ? "成功" : "失败"}`);
+    return success;
 }
 
-function parseMainCourse(html) {
+function parseMainCourse(html, log) {
+    log("[主课表] 开始解析");
     const events = [];
     const trs = html.match(/<tr[\s\S]*?<\/tr>/gi) || [];
     const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let count = 0;
 
     for (const tr of trs) {
         const tds = tr.match(/<td\b[^>]*>[\s\S]*?<\/td>/gi) || [];
@@ -72,41 +85,57 @@ function parseMainCourse(html) {
             const loc = lines[2];
 
             events.push({ id: `swust-${lecture}-${i}`, title: name, day: days[i - offset], start: time.s, end: time.e, location: loc, teacher, weeks });
+            count++;
         }
     }
+    log(`[主课表] 解析到 ${count} 个课程`);
     return events;
 }
 
 async function fetchExpCourse(ctx, log) {
-    // Pre-request to establish session
+    log("[实验课] 预请求建立会话...");
     await ctx.http.get("https://sjjx.dean.swust.edu.cn/swust", { withCredentials: true }).catch(() => { });
 
     const events = [];
     let page = 1, total = 1;
 
     do {
+        log(`[实验课] 获取第 ${page} 页`);
         const res = await ctx.http.get(`${EXP_API}?page.pageNum=${page}`, { withCredentials: true });
         const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
+        log(`[实验课] 响应长度: ${html.length}`);
 
         if (page === 1) {
             const m = html.match(/第\s*\d+\s*页\s*\/\s*共\s*(\d+)\s*页/);
-            if (m) total = Number(m[1]);
+            if (m) {
+                total = Number(m[1]);
+                log(`[实验课] 共 ${total} 页`);
+            }
         }
 
+        let pageCount = 0;
         for (const tr of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
             const cells = [...tr[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => stripTag(m[1]));
             if (cells.length < 5) continue;
 
             const [name, , timeStr, loc, teacher] = cells;
+            if (!name || !timeStr) continue;
+
             const m = timeStr.match(/(\d+)周星期([一二三四五六日])(\d+)[-~]?(\d*)节/);
-            if (!m) continue;
+            if (!m) {
+                log(`[实验课] 时间格式无法解析: ${timeStr}`);
+                continue;
+            }
 
             const week = Number(m[1]), day = DAY_MAP[m[2]], start = Number(m[3]), end = m[4] ? Number(m[4]) : start;
             events.push({ id: `exp-${week}-${day}-${start}`, title: name, day, start: SECTION_TIME[start] || "08:00", end: SECTION_TIME[end + 1] || "09:40", location: loc, teacher, weeks: [week] });
+            pageCount++;
         }
+        log(`[实验课] 第 ${page} 页解析 ${pageCount} 个课程`);
         page++;
     } while (page <= total && page <= 20);
 
+    log(`[实验课] 共 ${events.length} 个课程`);
     return events;
 }
 
@@ -114,31 +143,47 @@ exports.run = async (ctx) => {
     const { phone, smsCode } = ctx.config;
     const log = (m) => ctx.log(m);
 
-    log(`SWUST Plugin v2.1.0 - ${phone}`);
+    log(`========== SWUST Plugin v2.1.0 ==========`);
+    log(`手机号: ${phone}`);
 
-    if (!phone || !/^\d{11}$/.test(phone)) return { events: [], debug: { error: "手机号格式错误" } };
+    if (!phone || !/^\d{11}$/.test(phone)) {
+        log("错误: 手机号格式不正确");
+        return { events: [], debug: { error: "手机号格式错误" } };
+    }
 
     // Send SMS
     if (ctx.hasButton("Get_Sms_Code")) {
+        log(">>> 发送验证码模式 <<<");
         const url = `${CAS_URL}?service=${encodeURIComponent(CAS_SERVICE_MAIN)}`;
         const page = await ctx.http.get(url, { withCredentials: true });
         const exec = extractExec(page.data);
+        log(`execution: ${exec || "(空)"}`);
 
         for (const ep of ["/authserver/getDynamicCode", "/authserver/sendDynamicCode"]) {
+            log(`尝试端点: ${ep}`);
             try {
                 const res = await ctx.http.post(`https://cas.swust.edu.cn${ep}`, buildForm({ mobile: phone, phone, username: phone, execution: exec, _eventId: "send", type: "mobile" }), { withCredentials: true, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
                 if (res.status === 200) {
                     ctx.storage.set("swust_phone", phone);
+                    log("验证码发送成功");
                     return { events: [], debug: { smsSent: true } };
                 }
-            } catch (e) { }
+            } catch (e) {
+                log(`端点失败: ${e.message}`);
+            }
         }
+        log("验证码发送失败");
         return { events: [], debug: { error: "发送失败" } };
     }
 
     // Login
     if (ctx.hasButton("login")) {
-        if (!smsCode) return { events: [], debug: { error: "请输入验证码" } };
+        log(">>> 登录获取课表模式 <<<");
+
+        if (!smsCode) {
+            log("错误: 未输入验证码");
+            return { events: [], debug: { error: "请输入验证码" } };
+        }
 
         ctx.storage.set("swust_phone", phone);
         ctx.storage.set("swust_sms_code", smsCode);
@@ -152,11 +197,15 @@ exports.run = async (ctx) => {
         await casLogin(ctx, CAS_SERVICE_EXP, phone, smsCode, log);
 
         // Fetch main courses
+        log(">>> 获取主课表 <<<");
         const res = await ctx.http.get(TIMETABLE_URL, { withCredentials: true });
         const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
-        const mainEvents = parseMainCourse(html);
+        log(`课表页长度: ${html.length}`);
+
+        const mainEvents = parseMainCourse(html, log);
 
         // Fetch experiment courses
+        log(">>> 获取实验课表 <<<");
         const expEvents = await fetchExpCourse(ctx, log);
 
         // Extract term start date
@@ -168,7 +217,11 @@ exports.run = async (ctx) => {
             startDate = (t === "春" || t === "2") ? `${y + 1}-03-01` : `${y}-09-01`;
         }
 
-        log(`获取 ${mainEvents.length} 个课程 + ${expEvents.length} 个实验课`);
+        log(`========== 完成 ==========`);
+        log(`主课表: ${mainEvents.length} 个`);
+        log(`实验课: ${expEvents.length} 个`);
+        log(`总计: ${mainEvents.length + expEvents.length} 个课程`);
+
         return { events: [...mainEvents, ...expEvents], configurations: { "start-time": [startDate], "script-name": "西南科技大学" } };
     }
 
