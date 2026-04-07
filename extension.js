@@ -624,13 +624,25 @@ async function fetchExperimentCourses(ctx, debug) {
     let pageNum = 1;
     let totalPages = 1;
 
+    // 预请求 /swust 建立会话 (参考 Java 代码)
+    debug("[fetchExperimentCourses] 预请求 /swust 建立会话...");
+    try {
+        const preRes = await ctx.http.get("https://sjjx.dean.swust.edu.cn/swust", { timeout: 15000, withCredentials: true });
+        debug(`[fetchExperimentCourses] 预请求状态: ${preRes.status}`);
+    } catch (e) {
+        debug(`[fetchExperimentCourses] 预请求失败: ${String(e)}`);
+    }
+
     do {
         debug(`[fetchExperimentCourses] 获取第 ${pageNum} 页...`);
         try {
             // Use the correct experiment course API endpoint
             const url = `${EXPERIMENT_COURSE_API}?page.pageNum=${pageNum}`;
+            debug(`[fetchExperimentCourses] 请求URL: ${url}`);
             const res = await ctx.http.get(url, { timeout: 15000, withCredentials: true });
             const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data ?? {});
+            debug(`[fetchExperimentCourses] 响应长度: ${html.length}`);
+            debug(`[fetchExperimentCourses] 响应预览: ${html.substring(0, 500)}...`);
 
             // Parse total pages from #myPage element
             if (pageNum === 1) {
