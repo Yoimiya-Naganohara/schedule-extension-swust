@@ -22,6 +22,8 @@ const CAS_SERVICE_MAIN = "https://matrix.dean.swust.edu.cn/acadmicManager/index.
 const CAS_SERVICE_EXP = "https://sjjx.dean.swust.edu.cn/swust/";
 const TIMETABLE_URL = "https://matrix.dean.swust.edu.cn/acadmicManager/index.cfm?event=studentPortal:courseTable";
 const EXP_API = "https://sjjx.dean.swust.edu.cn/teachn/teachnAction/index.action";
+const EXP_INDEX_URL = "https://sjjx.dean.swust.edu.cn/aexp/stuIndex.jsp";
+
 
 const LECTURE_TIME = { 1: { s: "08:00", e: "09:40" }, 2: { s: "10:00", e: "11:40" }, 3: { s: "14:00", e: "15:40" }, 4: { s: "16:00", e: "17:40" }, 5: { s: "19:00", e: "20:40" } };
 const SECTION_TIME = { 1: "08:00", 2: "08:50", 3: "10:00", 4: "10:50", 5: "14:00", 6: "14:50", 7: "16:00", 8: "16:50", 9: "19:00", 10: "19:50", 11: "20:40", 12: "21:30" };
@@ -82,7 +84,10 @@ function parseMainCourse(html, log) {
             if (lines.length < 1) continue;
 
             let [name, teacher] = lines[0].split(/\s*[-–—]\s*/);
-            const weeks = lines[1] ? (lines[1].match(/\d+/g) || []).map(Number) : undefined;
+            const weeks = lines[1] ? (lines[1].match(/\d+-\d+/g) || []).map(w => {
+                const [start, end] = w.split('-').map(Number);
+                return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+            }).flat() : undefined;
             const loc = lines[2];
 
             events.push({ id: `swust-${lecture}-${i}`, title: name, day: days[i - offset], start: time.s, end: time.e, location: loc, teacher, weeks });
@@ -92,6 +97,7 @@ function parseMainCourse(html, log) {
     log(`[主课表] 解析到 ${count} 个课程`);
     return events;
 }
+exports.parseMainCourse = parseMainCourse;
 
 async function fetchExpCourse(ctx, log) {
     log("[实验课] 预请求建立会话...");
