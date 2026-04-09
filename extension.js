@@ -146,6 +146,20 @@ function buildExpPageUrl(page, extraParams = {}) {
     return `${EXP_API}?${params.toString()}`;
 }
 
+function getExpNextPageUrl(html) {
+    const match = html.match(/<a[^>]+href=["']([^"']+)["'][^>]*>\s*下一页\s*<\/a>/i);
+    if (!match) return "";
+
+    const href = decodeHtml(match[1]).trim();
+    if (!href) return "";
+
+    try {
+        return new URL(href, EXP_API).toString();
+    } catch (_) {
+        return href;
+    }
+}
+
 function parseExpTime(timeStr) {
     const normalized = timeStr.replace(/\s+/g, "").replace(/[()（）]/g, "").replace(/至/g, "-");
     const match = normalized.match(/第?(\d+)周星期([一二三四五六日天])第?(\d+)(?:[-~](\d+))?节/);
@@ -200,7 +214,7 @@ function parseExpCoursePage(html, log, seen) {
 
     return events;
 }
-
+exports.parseExpCoursePage = parseExpCoursePage;
 async function requestExpPage(ctx, url) {
     return ctx.http.get(url, {
         withCredentials: true,
@@ -265,10 +279,11 @@ async function fetchExpCourse(ctx, phone, smsCode, log) {
     let page = 1;
     let total = 1;
     let extraParams = {};
+    let currentUrl = buildExpPageUrl(page, extraParams);
     let retried = false;
 
     do {
-        const url = buildExpPageUrl(page, extraParams);
+        const url = currentUrl || buildExpPageUrl(page, extraParams);
         log(`[实验课] 获取第 ${page} 页`);
 
         let html = "";
@@ -312,7 +327,14 @@ async function fetchExpCourse(ctx, phone, smsCode, log) {
         const pageEvents = parseExpCoursePage(html, log, seen);
         events.push(...pageEvents);
         log(`[实验课] 第 ${page} 页解析 ${pageEvents.length} 个课程`);
+
+        const nextPageUrl = getExpNextPageUrl(html);
+        if (nextPageUrl) {
+            log(`[实验课] 发现下一页链接: ${nextPageUrl}`);
+        }
+
         page++;
+        currentUrl = nextPageUrl || buildExpPageUrl(page, extraParams);
         retried = false;
     } while (page <= total && page <= 20);
 
@@ -397,7 +419,7 @@ exports.run = async (ctx) => {
         if (termMatch) {
             const y = parseInt(termMatch[1]);
             const t = termMatch[3];
-            startDate = (t === "春" || t === "2") ? `${y + 1}-03-01` : `${y}-09-01`;
+            startDate = (t === "春" || t === "2") ? `${y + 1}-03-02` : `${y}-09-01`;
         }
 
         log(`========== 完成 ==========`);
