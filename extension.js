@@ -44,8 +44,6 @@ function addMinutes(time, minutes) {
 }
 
 function getSectionEndTime(section) {
-    const nextStart = SECTION_TIME[section + 1];
-    if (nextStart) return nextStart;
     const currentStart = SECTION_TIME[section];
     return currentStart ? addMinutes(currentStart, 50) : "09:40";
 }
