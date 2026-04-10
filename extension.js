@@ -112,6 +112,7 @@ function parseMainCourse(html, log) {
     log(`[主课表] 解析到 ${count} 个课程`);
     return events;
 }
+exports.parseMainCourse = parseMainCourse;
 
 function isExpLoginPage(html) {
     return /authserver|name="execution"|统一身份认证|登录/i.test(html);
@@ -412,7 +413,7 @@ exports.run = async (ctx) => {
 
         // Extract term start date
         const termMatch = html.match(/(\d{4})-(\d{4})[学年\-]?\s*(春|秋|1|2)/);
-        let startDate = "2026-03-08";
+        let startDate = "2026-03-02";
         if (termMatch) {
             const y = parseInt(termMatch[1]);
             const t = termMatch[3];
