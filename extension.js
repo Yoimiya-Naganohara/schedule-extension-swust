@@ -112,7 +112,6 @@ function parseMainCourse(html, log) {
     log(`[主课表] 解析到 ${count} 个课程`);
     return events;
 }
-exports.parseMainCourse = parseMainCourse;
 
 function isExpLoginPage(html) {
     return /authserver|name="execution"|统一身份认证|登录/i.test(html);
