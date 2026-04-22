@@ -112,7 +112,7 @@ function parseMainCourse(html, log) {
             if (txt.length < 5) continue;
             const lines = txt.split(/\n/).map(l => l.trim()).filter(Boolean);
             if (lines.length < 1) continue;
-            for (const line of chunks(ByteLengthQueuingStrategy, 3)) {
+            for (const line of chunks(lines, 3)) {
 
                 let [name, teacher] = line[0].split(/\s*[-–—]\s*/);
                 const weeks = line[1] ? (line[1].match(/\d+-\d+/g) || []).map(w => {
