@@ -1,4 +1,19 @@
 /**
+ * Splits an array into chunks of a specified size.
+ * @param {Array} arr - The array to split.
+ * @param {number} size - The chunk size.
+ * @returns {Array[]} Array of chunks.
+ */
+function chunks(arr, size) {
+    if (!Array.isArray(arr) || size < 1) return [];
+    const result = [];
+    for (let i = 0; i < arr.length; i += size) {
+        result.push(arr.slice(i, i + size));
+    }
+    return result;
+}
+exports.chunks = chunks;
+/**
  * 西南科技大学课表插件
  */
 
@@ -97,23 +112,25 @@ function parseMainCourse(html, log) {
             if (txt.length < 5) continue;
             const lines = txt.split(/\n/).map(l => l.trim()).filter(Boolean);
             if (lines.length < 1) continue;
+            for (const line of chunks(line, 3)){
 
-            let [name, teacher] = lines[0].split(/\s*[-–—]\s*/);
-            const weeks = lines[1] ? (lines[1].match(/\d+-\d+/g) || []).map(w => {
-                const [start, end] = w.split('-').map(Number);
-                return Array.from({ length: end - start + 1 }, (_, i) => start + i);
-            }).flat() : undefined;
-            const loc = lines[2];
-
+                let [name, teacher] = line[0].split(/\s*[-–—]\s*/);
+                const weeks = line[1] ? (line[1].match(/\d+-\d+/g) || []).map(w => {
+                    const [start, end] = w.split('-').map(Number);
+                    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+                }).flat() : undefined;
+                const loc = line[2];
+                
             events.push({ id: `swust-${lecture}-${i}`, title: name, day: days[i - offset], start: time.s, end: time.e, location: loc, teacher, weeks });
-            count++;
+                count++;
+            }
         }
     }
     log(`[主课表] 解析到 ${count} 个课程`);
     return events;
 }
 exports.parseMainCourse = parseMainCourse;
-
+exports.parseMainCourse = parseMainCourse;
 function isExpLoginPage(html) {
     return /authserver|name="execution"|统一身份认证|登录/i.test(html);
 }
