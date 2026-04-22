@@ -112,7 +112,7 @@ function parseMainCourse(html, log) {
             if (txt.length < 5) continue;
             const lines = txt.split(/\n/).map(l => l.trim()).filter(Boolean);
             if (lines.length < 1) continue;
-            for (const line of chunks(line, 3)){
+            for (const line of chunks(ByteLengthQueuingStrategy, 3)) {
 
                 let [name, teacher] = line[0].split(/\s*[-–—]\s*/);
                 const weeks = line[1] ? (line[1].match(/\d+-\d+/g) || []).map(w => {
@@ -120,8 +120,8 @@ function parseMainCourse(html, log) {
                     return Array.from({ length: end - start + 1 }, (_, i) => start + i);
                 }).flat() : undefined;
                 const loc = line[2];
-                
-            events.push({ id: `swust-${lecture}-${i}`, title: name, day: days[i - offset], start: time.s, end: time.e, location: loc, teacher, weeks });
+
+                events.push({ id: `swust-${lecture}-${i}`, title: name, day: days[i - offset], start: time.s, end: time.e, location: loc, teacher, weeks });
                 count++;
             }
         }
